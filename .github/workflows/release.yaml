@@ -1,0 +1,82 @@
+name: release.yml
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            ext: ""
+          - os: windows-latest
+            ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build package
+        run: |
+          pyinstaller -F cc98_signin.py
+
+      - name: Output artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: dist/cc98_signin${{ matrix.ext }}
+          name: cc98_signin${{ matrix.ext }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-tags: true          
+      - name: set version
+        id: set_version
+        run: |
+          git pull --tags
+          raw_tag=$(git describe --tags $(git rev-list --tags --max-count=1))
+          clean_tag=$(echo "$raw_tag" | sed 's/^v//')
+          major=$(echo $clean_tag | cut -d. -f1)
+          minor=$(echo $clean_tag | cut -d. -f2)
+          next_minor=$(echo "$minor + 1" | bc)
+          new_tag="v${major}.$(printf "%.0f" $next_minor)"
+          echo "VERSION=$new_tag" >> $GITHUB_ENV
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: generate checksum
+        run: |
+          
+          sha256sum artifacts/cc98_signin* > artifacts/cc98_signin.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          body: |
+            Version: ${{ env.VERSION }}
+          files: |
+            artifacts/cc98_signin
+            artifacts/cc98_signin.exe
+            artifacts/cc98_signin.sha256
